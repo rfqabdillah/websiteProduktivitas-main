@@ -184,14 +184,13 @@
 <script setup>
 import { reactive, ref, onMounted, onUnmounted } from "vue";
 import { useRouter } from "vue-router";
-import { useToast } from "vue-toastification";
+import Swal from "sweetalert2";
 import { Form, Field } from "vee-validate";
 import * as yup from "yup";
 import axios from "@/utils/axiosEncrypt.js";
 import { getApplicationPub } from "@/services/general/website/settings/applicationsPublic";
 
 const router = useRouter();
-const toast = useToast();
 
 // === State Register ===
 const isLoading = ref(false);
@@ -273,11 +272,17 @@ function getRecaptchaToken() {
 
 async function onSubmit() {
   isLoading.value = true;
+
   try {
     const token = await getRecaptchaToken();
     if (!token) {
-      toast.error("Verifikasi reCAPTCHA gagal.");
-      isLoading.value = false;
+      Swal.fire({
+        icon: "error",
+        title: "Verifikasi Gagal",
+        text: "reCAPTCHA tidak valid.",
+        confirmButtonText: "OK",
+        allowOutsideClick: false,
+      });
       return;
     }
 
@@ -288,36 +293,93 @@ async function onSubmit() {
     fd.append("password", form.password);
     fd.append("g-recaptcha-response", token);
 
-    const response = await axios.post(`/register`, fd);
-    toast.success(response.data.message || "Akun berhasil dibuat!");
+    const response = await axios.post("/register", fd);
+
+    // ===== SUCCESS MODAL =====
+    await Swal.fire({
+      icon: "success",
+      title: "Registrasi Berhasil",
+      text: response.data.message || "Akun berhasil dibuat.",
+      confirmButtonText: "Login Sekarang",
+      allowOutsideClick: false,
+    });
+
     router.push("/auth");
+
   } catch (error) {
     console.error("Register Error:", error);
-    if (error.response && error.response.data) {
-      if (error.response.status === 422) {
-        const errors = error.response.data.errors;
-        if (errors) {
-          const messages = Object.values(errors).flat().join(", ");
-          toast.error(messages);
-        } else if (error.response.data.message) {
-          toast.error(error.response.data.message);
-        } else {
-          toast.error("Terjadi kesalahan validasi.");
-        }
-      } else {
-        const message =
-          error.response.data.message ||
-          error.response.data.error ||
-          "Gagal membuat akun.";
-        toast.error(message);
+
+    let title = "Registrasi Gagal";
+    let message = "Terjadi kesalahan sistem.";
+
+    if (error.response) {
+      const status = error.response.status;
+      const data = error.response.data;
+
+      // VALIDASI
+      if (status === 422 && data.errors) {
+        message = Object.values(data.errors).flat().join("\n");
       }
-    } else {
-      toast.error("Kesalahan sistem / koneksi server.");
+      // AKUN NON AKTIF
+      else if (status === 423 || data.code === "ACCOUNT_INACTIVE") {
+        Swal.fire({
+          icon: "warning",
+          title: "Akun Non-Aktif",
+          text: data.message || "Akun Anda non-aktif, silakan aktivasi.",
+          showCancelButton: true,
+          confirmButtonText: "Kirim Link Aktivasi",
+          cancelButtonText: "Batal",
+          allowOutsideClick: false
+        }).then(async (result) => {
+          if (result.isConfirmed) {
+            try {
+              await axios.post("/resend-activation", {
+                email: form.email
+              });
+
+              Swal.fire({
+                icon: "success",
+                title: "Berhasil",
+                text: "Link aktivasi telah dikirim ke email Anda.",
+                confirmButtonText: "OK"
+              });
+            } catch (err) {
+              Swal.fire({
+                icon: "error",
+                title: "Gagal",
+                text: err.response?.data?.message || "Gagal mengirim link aktivasi.",
+                confirmButtonText: "OK"
+              });
+            }
+          }
+        });
+
+        return;
+      }
+      // EMAIL SUDAH ADA
+      else if (status === 409) {
+        title = "Akun Sudah Terdaftar";
+        message = data.message || "Silakan login menggunakan akun Anda.";
+      }
+      // ERROR LAIN
+      else if (data.message) {
+        message = data.message;
+      }
     }
+
+    // ===== ERROR MODAL =====
+    Swal.fire({
+      icon: "error",
+      title,
+      text: message,
+      confirmButtonText: "Mengerti",
+      allowOutsideClick: false,
+    });
   } finally {
     isLoading.value = false;
   }
 }
+
 
 async function fetchLogoData() {
   isLoadingLogo.value = true;

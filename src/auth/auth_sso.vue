@@ -11,6 +11,7 @@
 import axios from '@/utils/axiosEncrypt.js';
 import { userLevelUmum } from "@/constants/userLevels";
 import { useToast } from "vue-toastification";
+import Swal from "sweetalert2";
 import { useStore } from "vuex";
 import { useRouter, useRoute } from "vue-router";
 
@@ -25,60 +26,77 @@ export default {
     // Fungsi login SSO
     const loginWithSSO = async (ssoToken, ssoRefreshToken, access_token) => {
       try {
-        console.log("Access Token:", access_token);
-
-        // Ambil data user dari API backend
-        const response = await axios.get(`/my_profil`, {
+        const response = await axios.get(`/auth_sso`, {
           headers: { Authorization: `Bearer ${access_token}` }
         });
 
         const user = response.data?.data?.user;
         if (!user) {
           toast.error("Data user tidak ditemukan.");
-          router.push("/auth"); // fallback ke login
+          router.push("/auth");
           return;
         }
 
-
-        try {
-          const userId = user.id_pengguna || user.id;
-          if (userId) {
-            const formData = new FormData();
-            formData.append("record[status]", "Aktif");
-            formData.append("_method", "PUT");
-
-            // Mengirim update status ke backend
-            await axios.post(`/users/${userId}`, formData, {
-              headers: { Authorization: `Bearer ${access_token}` }
-            });
-          }
-        } catch (err) {
-          console.error("Gagal update status login:", err);
-        }
-
-        // Simpan token & user
+        // Normal login success
         localStorage.setItem('token', access_token);
-        localStorage.setItem(
-            "userData",
-            JSON.stringify({ data: [user] })
-        );
-
-
+        localStorage.setItem("userData", JSON.stringify({ data: [user] }));
         toast.success(`Login berhasil! Selamat datang, ${user.nama || "Pengguna"}`);
 
-        // Redirect berdasarkan level user
         const userLevel = user.id_level ?? user.roles?.id_level;
-
         store.dispatch("menu/refreshMenuByUserLevel");
         router.push(userLevel === userLevelUmum ? "/my-profile" : "/");
 
       } catch (error) {
-        console.error("Login SSO Error:", error);
-        const message = error.response?.data?.message || "Login gagal. Token tidak ditemukan.";
-        toast.error(message);
-        router.push("/auth"); // fallback ke login
+        // Tangani error dari backend
+        const status = error.response?.status;
+        const data = error.response?.data;
+
+        if (status === 423 || data?.code === "ACCOUNT_INACTIVE") {
+          // Tampilkan Swal untuk akun non aktif
+          Swal.fire({
+            icon: "warning",
+            title: "Akun Non-Aktif",
+            text: data?.message || "Akun Anda non-aktif, silakan aktivasi.",
+            showCancelButton: true,
+            confirmButtonText: "Kirim Link Aktivasi",
+            cancelButtonText: "Batal",
+            allowOutsideClick: false
+          }).then(async (result) => {
+            if (result.isConfirmed) {
+              try {
+                await axios.post("/resend-activation", { email: data?.email });
+
+                Swal.fire({
+                  icon: "success",
+                  title: "Berhasil",
+                  text: "Link aktivasi telah dikirim ke email Anda.",
+                  confirmButtonText: "OK"
+                }).then(() => {
+                  router.push("/auth"); // redirect ke halaman login setelah klik OK
+                });
+
+              } catch (err) {
+                Swal.fire({
+                  icon: "error",
+                  title: "Gagal",
+                  text: err.response?.data?.message || "Gagal mengirim link aktivasi.",
+                  confirmButtonText: "OK"
+                }).then(() => {
+                  router.push("/auth"); // redirect ke halaman login setelah klik OK
+                });
+              }
+            }
+          });
+
+          return; // hentikan proses login lebih lanjut
+        }
+
+        // Jika error lain
+        toast.error(data?.message || "Login gagal. Token tidak ditemukan.");
+        router.push("/auth");
       }
     };
+
 
     // Saat mounted, ambil query params dari route
     const ssoToken = route.query.token;

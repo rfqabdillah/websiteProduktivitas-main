@@ -1,24 +1,24 @@
 import { importRsaPublicKey, rsaEncryptAesKey } from "./rsaHelper";
 import { bytesToHex } from "./cryptoHelper";
-
+const BASE_URL = process.env.VUE_APP_API_URL;
 export async function performHandshake() {
 
-    // 1. Ambil public RSA key dari backend (via proxy)
-    const res = await fetch(`/api/api/crypto/public-key`);
+    // 1. Ambil public RSA key
+    const res = await fetch(`${BASE_URL}/crypto/public-key`);
     const data = await res.json();
     const publicKeyPem = data.public_key;
 
     const rsaKey = await importRsaPublicKey(publicKeyPem);
 
-    // 2. Generate random AES key (32 bytes)
+    // 2. Generate AES key
     const aesKeyBytes = crypto.getRandomValues(new Uint8Array(32));
     const aesKeyHex = bytesToHex(aesKeyBytes);
 
-    // 3. Encrypt AES key with RSA
+    // 3. Encrypt AES key
     const encryptedKeyHex = await rsaEncryptAesKey(aesKeyBytes, rsaKey);
 
-    // 4. Kirim AES key terenkripsi ke backend (via proxy)
-    const handshakeRes = await fetch(`/api/api/crypto/handshake`, {
+    // 4. Kirim handshake
+    const handshakeRes = await fetch(`${BASE_URL}/crypto/handshake`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ key: encryptedKeyHex })
@@ -27,7 +27,6 @@ export async function performHandshake() {
     const handshakeJson = await handshakeRes.json();
     const sessionToken = handshakeJson.session_token;
 
-    // 5. Simpan session token & AES key
     localStorage.setItem("ENCRYPTION_SESSION", sessionToken);
     localStorage.setItem("AES_KEY", aesKeyHex);
 
